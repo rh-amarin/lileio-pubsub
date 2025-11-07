@@ -1,0 +1,43 @@
+FROM golang:alpine AS builder
+
+WORKDIR /app
+
+# Copy root module files (needed for replace directive)
+COPY go.mod go.sum ./
+COPY providers/ ./providers/
+COPY pubsub.go publish.go subscribe.go pubsub.pb.go pubsub.proto noop.go ./
+COPY middleware/ middleware/
+
+# Copy example go mod files
+COPY example/google-pubsub-emulator/go.mod example/google-pubsub-emulator/go.sum ./example/google-pubsub-emulator/
+
+# Set working directory to example
+WORKDIR /app/example/google-pubsub-emulator
+
+# Download dependencies
+RUN go mod download
+
+# Copy source code
+COPY example/google-pubsub-emulator/subscriber/ ./subscriber/
+
+# Build the application
+RUN CGO_ENABLED=0 GOOS=linux go build -a -installsuffix cgo -o subscriber ./subscriber/main.go
+
+# Final stage
+FROM alpine:latest
+
+RUN apk --no-cache add ca-certificates
+
+WORKDIR /root/
+
+# Copy the binary from builder
+COPY --from=builder /app/example/google-pubsub-emulator/subscriber/main ./subscriber
+
+# Copy entrypoint script and base64 encoded credentials
+COPY example/google-pubsub-emulator/entrypoint.sh /entrypoint.sh
+COPY example/google-pubsub-emulator/dummy-credentials.json.b64 /root/dummy-credentials.json.b64
+
+RUN chmod +x /entrypoint.sh
+
+ENTRYPOINT ["/entrypoint.sh"]
+CMD ["./subscriber"]

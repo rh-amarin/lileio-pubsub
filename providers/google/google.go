@@ -3,7 +3,9 @@ package google
 import (
 	"context"
 	fmt "fmt"
+	"log"
 	math "math"
+	"os"
 	"runtime"
 	"sync"
 	"time"
@@ -19,13 +21,12 @@ import (
 	"golang.org/x/sync/semaphore"
 	"google.golang.org/api/option"
 	pbpb "google.golang.org/genproto/googleapis/pubsub/v1"
+	"google.golang.org/grpc"
 
 	"github.com/sirupsen/logrus"
 )
 
-var (
-	mutex = &sync.Mutex{}
-)
+var mutex = &sync.Mutex{}
 
 // GoogleCloud provides google cloud pubsub
 type GoogleCloud struct {
@@ -48,12 +49,21 @@ func NewGoogleCloud(projectID string) (*GoogleCloud, error) {
 		numConns = 4
 	}
 
-	c, err := pubsub.NewClient(context.Background(), projectID, option.WithGRPCConnectionPool(numConns))
+	// Check if we're using the Pub/Sub emulator
+	var opts []option.ClientOption
+	if os.Getenv("PUBSUB_EMULATOR_HOST") != "" {
+		// When using the emulator, skip authentication and use insecure connections
+		opts = append(opts, option.WithoutAuthentication())
+		opts = append(opts, option.WithGRPCDialOption(grpc.WithInsecure()))
+	}
+	opts = append(opts, option.WithGRPCConnectionPool(numConns))
+
+	c, err := pubsub.NewClient(context.Background(), projectID, opts...)
 	if err != nil {
 		return nil, err
 	}
 
-	s, err := pbs.NewSubscriberClient(context.Background(), option.WithGRPCConnectionPool(numConns))
+	s, err := pbs.NewSubscriberClient(context.Background(), opts...)
 	if err != nil {
 		return nil, err
 	}
@@ -118,26 +128,34 @@ type workUnit struct {
 }
 
 func (g *GoogleCloud) subscribe(opts ps.HandlerOptions, h ps.MsgHandler, ready chan<- bool) {
+	log.Printf("topic " + opts.Topic)
 	go func() {
 		var err error
 		subName := opts.ServiceName + "." + opts.Name + "--" + opts.Topic
+		log.Printf("subName " + subName)
 		if opts.Unique {
 			subName = subName + "-uniq-" + ksuid.New().String()
 		}
 
 		sub := g.client.Subscription(subName)
+		if sub == nil {
+			log.Printf("sub is nil")
+		}
+		log.Printf("sub is not nil")
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		exists, err := sub.Exists(ctx)
+		log.Printf("exists? %v", exists)
+		if err != nil {
+			log.Fatalf("Failed to check if subscription exists: %v", err)
+		}
 
 		t, err := g.getTopic(opts.Topic)
 		if err != nil {
-			logrus.Panicf("Can't fetch topic: %s", err.Error())
+			logrus.Panicf("Can't fetch topic %s -- : %s", opts.Topic, err.Error())
 		}
 
-		ok, err := sub.Exists(context.Background())
-		if err != nil {
-			logrus.Panicf("Can't connect to pubsub: %s", err.Error())
-		}
-
-		if !ok {
+		if !exists {
 			sc := pubsub.SubscriptionConfig{
 				Topic:       t,
 				AckDeadline: opts.Deadline,
@@ -159,7 +177,7 @@ func (g *GoogleCloud) subscribe(opts ps.HandlerOptions, h ps.MsgHandler, ready c
 		ready <- true
 
 		b := &backoff.Backoff{
-			//These are the defaults
+			// These are the defaults
 			Min:    200 * time.Millisecond,
 			Max:    600 * time.Second,
 			Factor: 2,

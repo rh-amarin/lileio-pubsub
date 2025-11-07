@@ -1,0 +1,68 @@
+version: '3.8'
+
+services:
+  rabbitmq:
+    image: rabbitmq:3
+    container_name: rabbitmq
+    ports:
+      - "5672:5672"
+      - "15672:15672"
+    environment:
+      - RABBITMQ_DEFAULT_USER=guest
+      - RABBITMQ_DEFAULT_PASS=guest
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - rabbitmq-network
+
+  publisher:
+    build:
+      context: ../..
+      dockerfile: example/rabbitmq/Dockerfile.publisher
+    container_name: publisher
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+    environment:
+      - RABBITMQ_URL=amqp://guest:guest@rabbitmq:5672/
+      - RABBITMQ_TOPIC=hello.topic
+    networks:
+      - rabbitmq-network
+
+  subscriber-1:
+    build:
+      context: ../..
+      dockerfile: example/rabbitmq/Dockerfile.subscriber
+    container_name: subscriber-1
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+    environment:
+      - RABBITMQ_URL=amqp://guest:guest@rabbitmq:5672/
+      - RABBITMQ_TOPIC=hello.topic
+      - SUBSCRIBER_NAME=subscriber-1
+    networks:
+      - rabbitmq-network
+
+  subscriber-2:
+    build:
+      context: ../..
+      dockerfile: example/rabbitmq/Dockerfile.subscriber
+    container_name: subscriber-2
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+    environment:
+      - RABBITMQ_URL=amqp://guest:guest@rabbitmq:5672/
+      - RABBITMQ_TOPIC=hello.topic
+      - SUBSCRIBER_NAME=subscriber-2
+    networks:
+      - rabbitmq-network
+
+networks:
+  rabbitmq-network:
+    driver: bridge
+

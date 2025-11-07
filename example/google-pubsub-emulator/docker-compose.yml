@@ -1,0 +1,85 @@
+version: '3.8'
+
+services:
+  pubsub-emulator:
+    image: gcr.io/google.com/cloudsdktool/google-cloud-cli:emulators
+    container_name: pubsub-emulator
+    command: gcloud beta emulators pubsub start --host-port=0.0.0.0:8085
+    ports:
+      - "8085:8085"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8085"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - pubsub-network
+
+  pubsub-init:
+    image: python:3-slim
+    container_name: pubsub-init
+    depends_on:
+      pubsub-emulator:
+        condition: service_healthy
+    environment:
+      - PUBSUB_EMULATOR_HOST=pubsub-emulator:8085
+      - PUBSUB_PROJECT_ID=test-project
+    volumes:
+      - ./init-pubsub.sh:/init-pubsub.sh
+      - ./init_pubsub.py:/init_pubsub.py
+    command: /bin/bash /init-pubsub.sh
+    networks:
+      - pubsub-network
+
+  pubsub-publisher:
+    build:
+      context: ../..
+      dockerfile: example/google-pubsub-emulator/Dockerfile.publisher
+    container_name: pubsub-publisher
+    depends_on:
+      pubsub-init:
+        condition: service_completed_successfully
+    environment:
+      - PUBSUB_EMULATOR_HOST=pubsub-emulator:8085
+      - PUBSUB_PROJECT_ID=test-project
+      - PUBSUB_TOPIC=test-topic
+    networks:
+      - pubsub-network
+
+  pubsub-subscriber-1:
+    build:
+      context: ../..
+      dockerfile: example/google-pubsub-emulator/Dockerfile.subscriber
+    container_name: pubsub-subscriber-1
+    depends_on:
+      pubsub-init:
+        condition: service_completed_successfully
+    environment:
+      - PUBSUB_EMULATOR_HOST=pubsub-emulator:8085
+      - PUBSUB_PROJECT_ID=test-project
+      - PUBSUB_TOPIC=test-topic
+      - PUBSUB_SUBSCRIPTION=test-subscription
+      - SUBSCRIBER_NAME=subscriber-1
+    networks:
+      - pubsub-network
+
+  pubsub-subscriber-2:
+    build:
+      context: ../..
+      dockerfile: example/google-pubsub-emulator/Dockerfile.subscriber
+    container_name: pubsub-subscriber-2
+    depends_on:
+      pubsub-init:
+        condition: service_completed_successfully
+    environment:
+      - PUBSUB_EMULATOR_HOST=pubsub-emulator:8085
+      - PUBSUB_PROJECT_ID=test-project
+      - PUBSUB_TOPIC=test-topic
+      - PUBSUB_SUBSCRIPTION=test-subscription
+      - SUBSCRIBER_NAME=subscriber-2
+    networks:
+      - pubsub-network
+
+networks:
+  pubsub-network:
+    driver: bridge

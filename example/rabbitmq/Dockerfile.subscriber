@@ -1,0 +1,36 @@
+FROM golang:alpine AS builder
+
+WORKDIR /app
+
+# Copy parent module (for replace directive)
+COPY go.mod go.sum ./
+COPY providers/ providers/
+COPY pubsub.go publish.go subscribe.go pubsub.pb.go pubsub.proto noop.go ./
+COPY middleware/ middleware/
+
+# Copy example go mod files
+COPY example/rabbitmq/go.mod example/rabbitmq/go.sum ./example/rabbitmq/
+
+# Download dependencies
+WORKDIR /app/example/rabbitmq
+RUN go mod download
+
+# Copy source code
+COPY example/rabbitmq/subscriber/ ./subscriber/
+
+# Build the application
+WORKDIR /app/example/rabbitmq
+RUN CGO_ENABLED=0 GOOS=linux go build -a -installsuffix cgo -o subscriber ./subscriber/main.go
+
+# Final stage
+FROM alpine:latest
+
+RUN apk --no-cache add ca-certificates
+
+WORKDIR /root/
+
+# Copy the binary from builder
+COPY --from=builder /app/example/rabbitmq/subscriber/main ./subscriber
+
+CMD ["./subscriber"]
+
